@@ -128,12 +128,12 @@ function App() {
       }
     }
 
-    fetch("http://localhost:5000")
+    fetch("https://quickkart-ai.onrender.com")
       .then((response) => response.json())
       .then((data) => setBackendMessage(data.message))
       .catch((error) => console.error("Backend connection error:", error));
 
-    fetch("http://localhost:5000/api/products")
+    fetch("https://quickkart-ai.onrender.com/api/products")
       .then((response) => response.json())
       .then((data) => setProducts(data.products || []))
       .catch((error) => console.error("Products fetch error:", error));
@@ -414,8 +414,8 @@ function App() {
     try {
       const endpoint =
         authMode === "login"
-          ? "http://localhost:5000/api/auth/login"
-          : "http://localhost:5000/api/auth/register";
+          ? "https://quickkart-ai.onrender.com/api/auth/login"
+          : "https://quickkart-ai.onrender.com/api/auth/register";
 
       const body =
         authMode === "login"
@@ -495,7 +495,7 @@ function App() {
 
     try {
       const response = await fetch(
-        "http://localhost:5000/api/auth/forgot-password",
+        "https://quickkart-ai.onrender.com/api/auth/forgot-password",
         {
           method: "POST",
           headers: {
@@ -560,7 +560,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/api/auth/reset-password/${encodeURIComponent(resetToken)}`,
+        `https://quickkart-ai.onrender.com/api/auth/reset-password/${encodeURIComponent(resetToken)}`,
         {
           method: "POST",
           headers: {
@@ -647,10 +647,10 @@ function App() {
         usersResponse,
         ordersResponse
       ] = await Promise.all([
-        fetch(`http://localhost:5000/api/admin/stats/${userId}`),
-        fetch(`http://localhost:5000/api/admin/products/${userId}`),
-        fetch(`http://localhost:5000/api/admin/users/${userId}`),
-        fetch(`http://localhost:5000/api/admin/orders/${userId}`)
+        fetch(`https://quickkart-ai.onrender.com/api/admin/stats/${userId}`),
+        fetch(`https://quickkart-ai.onrender.com/api/admin/products/${userId}`),
+        fetch(`https://quickkart-ai.onrender.com/api/admin/users/${userId}`),
+        fetch(`https://quickkart-ai.onrender.com/api/admin/orders/${userId}`)
       ]);
 
       const statsData = await statsResponse.json();
@@ -695,7 +695,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/api/orders/user/${loggedInUser.id}`
+        `https://quickkart-ai.onrender.com/api/orders/user/${loggedInUser.id}`
       );
 
       const data = await response.json();
@@ -743,7 +743,7 @@ function App() {
       }));
 
       const response = await fetch(
-        "http://localhost:5000/api/orders",
+        "https://quickkart-ai.onrender.com/api/orders",
         {
           method: "POST",
           headers: {
@@ -788,7 +788,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/api/admin/products/${loggedInUser.id}/${productId}`,
+        `https://quickkart-ai.onrender.com/api/admin/products/${loggedInUser.id}/${productId}`,
         { method: "DELETE" }
       );
 
@@ -804,7 +804,7 @@ function App() {
       await loadAdminDashboard();
 
       const productsResponse = await fetch(
-        "http://localhost:5000/api/products"
+        "https://quickkart-ai.onrender.com/api/products"
       );
 
       const productsData = await productsResponse.json();
@@ -828,7 +828,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:5000/api/admin/orders/${loggedInUser.id}/${orderId}`,
+        `https://quickkart-ai.onrender.com/api/admin/orders/${loggedInUser.id}/${orderId}`,
         {
           method: "PUT",
           headers: {
