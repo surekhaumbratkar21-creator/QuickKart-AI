@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+# Environment variables - never upload secrets
+.env
+.env.*
+!.env.example
+
+# Build folders
+**/dist/
+**/node_modules/
