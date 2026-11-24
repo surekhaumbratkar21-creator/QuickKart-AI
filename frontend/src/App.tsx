@@ -3,6 +3,8 @@ import "./App.css";
 import { useEffect, useState } from "react";
 import { evaluateRecommendations } from "./recommendationEvaluation";
 
+const API = "https://quickkart-ai.onrender.com";
+
 type Product = {
   _id: string;
   name: string;
@@ -14,9 +16,7 @@ type Product = {
   rating: number;
 };
 
-type CartItem = Product & {
-  quantity: number;
-};
+type CartItem = Product & { quantity: number };
 
 type User = {
   id: string;
@@ -36,13 +36,11 @@ type OrderItem = {
 
 type Order = {
   _id: string;
-  userId:
-    | string
-    | {
-        _id: string;
-        name: string;
-        email: string;
-      };
+  userId: string | {
+    _id: string;
+    name: string;
+    email: string;
+  };
   items: OrderItem[];
   totalAmount: number;
   status: string;
@@ -70,7 +68,8 @@ type Evaluation = {
   relevantProducts: string[];
 };
 
-type AuthMode = "login" | "register" | "forgot" | "reset";
+
+type AuthMode = "login" | "register" | "forgot" | "reset" | "verifyOtp";
 
 function App() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -78,7 +77,9 @@ function App() {
   const [viewedProductIds, setViewedProductIds] = useState<string[]>([]);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+
   const [backendMessage, setBackendMessage] = useState("");
+  const [loadingProducts, setLoadingProducts] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
 
@@ -92,10 +93,10 @@ function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  // Forgot Password states
   const [resetToken, setResetToken] = useState("");
-  const [resetLink, setResetLink] = useState("");
   const [resetMessage, setResetMessage] = useState("");
+  const [resetOtp, setResetOtp] = useState("");
+  const [otpVerified, setOtpVerified] = useState(false);
 
   const [showOrders, setShowOrders] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
@@ -107,45 +108,77 @@ function App() {
   const [adminOrders, setAdminOrders] = useState<Order[]>([]);
   const [loadingAdmin, setLoadingAdmin] = useState(false);
 
-  // ==============================
-  // FETCH BACKEND + PRODUCTS
-  // ==============================
+  // ==================================
+  // FETCH BACKEND AND PRODUCTS
+  // ==================================
 
   useEffect(() => {
-    const savedViewedProducts = localStorage.getItem(
-      "quickkart_viewed_products"
-    );
+    const saved = localStorage.getItem("quickkart_viewed_products");
 
-    if (savedViewedProducts) {
+    if (saved) {
       try {
-        const parsed = JSON.parse(savedViewedProducts);
-
+        const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
           setViewedProductIds(parsed);
         }
       } catch (error) {
-        console.error("Viewed product history error:", error);
+        console.error("Viewed products error:", error);
       }
     }
 
-    fetch("https://quickkart-ai.onrender.com")
-      .then((response) => response.json())
-      .then((data) => setBackendMessage(data.message))
-      .catch((error) => console.error("Backend connection error:", error));
+    const loadData = async () => {
+      try {
+        const backendResponse = await fetch(API);
 
-    fetch("https://quickkart-ai.onrender.com/api/products")
-      .then((response) => response.json())
-      .then((data) => setProducts(data.products || []))
-      .catch((error) => console.error("Products fetch error:", error));
+        if (!backendResponse.ok) {
+          throw new Error("Backend connection failed");
+        }
+
+        const backendData = await backendResponse.json();
+        setBackendMessage(
+          backendData.message || "Backend connected successfully!"
+        );
+
+        const productsResponse = await fetch(`${API}/api/products`);
+
+        if (!productsResponse.ok) {
+          throw new Error("Products API failed");
+        }
+
+        const productsData = await productsResponse.json();
+
+        console.log("Products received:", productsData);
+
+        if (Array.isArray(productsData.products)) {
+          setProducts(productsData.products);
+        } else {
+          setProducts([]);
+          console.error("Invalid products response:", productsData);
+        }
+      } catch (error) {
+        console.error("Loading error:", error);
+        setBackendMessage("Backend connection failed!");
+      } finally {
+        setLoadingProducts(false);
+      }
+    };
+
+    loadData();
   }, []);
 
-  // ==============================
-  // CHECK PASSWORD RESET URL
-  // ==============================
+  // ==================================
+  // PASSWORD RESET URL
+  // ==================================
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
+
+    // Supports both /reset-password/TOKEN and ?token=TOKEN
+    const pathParts = window.location.pathname.split("/");
+    const pathToken =
+      pathParts[1] === "reset-password" ? pathParts[2] : null;
+
+    const token = params.get("token") || pathToken;
 
     if (token) {
       setResetToken(token);
@@ -161,55 +194,68 @@ function App() {
     );
   }, [viewedProductIds]);
 
-  // ==============================
+  // ==================================
   // CART
-  // ==============================
+  // ==================================
 
   const addToCart = (product: Product) => {
-    setViewedProductIds((previousIds) =>
-      previousIds.includes(product._id)
-        ? previousIds
-        : [...previousIds, product._id]
+    if (product.stock <= 0) {
+      alert("This product is out of stock.");
+      return;
+    }
+
+    setViewedProductIds((previous) =>
+      previous.includes(product._id)
+        ? previous
+        : [...previous, product._id]
     );
 
-    setCart((previousCart) => {
-      const existingProduct = previousCart.find(
+    setCart((previous) => {
+      const existing = previous.find(
         (item) => item._id === product._id
       );
 
-      if (existingProduct) {
-        return previousCart.map((item) =>
+      if (existing) {
+        if (existing.quantity >= product.stock) {
+          alert("Available stock limit reached.");
+          return previous;
+        }
+
+        return previous.map((item) =>
           item._id === product._id
             ? { ...item, quantity: item.quantity + 1 }
             : item
         );
       }
 
-      return [...previousCart, { ...product, quantity: 1 }];
+      return [...previous, { ...product, quantity: 1 }];
     });
   };
 
   const trackProductView = (productId: string) => {
-    setViewedProductIds((previousIds) =>
-      previousIds.includes(productId)
-        ? previousIds
-        : [...previousIds, productId]
+    setViewedProductIds((previous) =>
+      previous.includes(productId)
+        ? previous
+        : [...previous, productId]
     );
   };
 
   const increaseQuantity = (productId: string) => {
-    setCart((previousCart) =>
-      previousCart.map((item) =>
+    setCart((previous) =>
+      previous.map((item) =>
         item._id === productId
-          ? { ...item, quantity: item.quantity + 1 }
+          ? {
+              ...item,
+              quantity: Math.min(item.quantity + 1, item.stock)
+            }
           : item
       )
     );
   };
 
   const decreaseQuantity = (productId: string) => {
-    setCart((previousCart) =>
-      previousCart
+    setCart((previous) =>
+      previous
         .map((item) =>
           item._id === productId
             ? { ...item, quantity: item.quantity - 1 }
@@ -220,8 +266,8 @@ function App() {
   };
 
   const removeFromCart = (productId: string) => {
-    setCart((previousCart) =>
-      previousCart.filter((item) => item._id !== productId)
+    setCart((previous) =>
+      previous.filter((item) => item._id !== productId)
     );
   };
 
@@ -235,9 +281,9 @@ function App() {
     0
   );
 
-  // ==============================
-  // FILTER PRODUCTS
-  // ==============================
+  // ==================================
+  // PRODUCT FILTERING
+  // ==================================
 
   const categories = [
     "All",
@@ -247,9 +293,12 @@ function App() {
   ];
 
   const filteredProducts = products.filter((product) => {
+    const search = searchTerm.toLowerCase();
+
     const matchesSearch =
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.description.toLowerCase().includes(searchTerm.toLowerCase());
+      product.name.toLowerCase().includes(search) ||
+      product.description.toLowerCase().includes(search) ||
+      product.category.toLowerCase().includes(search);
 
     const matchesCategory =
       selectedCategory === "All" ||
@@ -258,9 +307,9 @@ function App() {
     return matchesSearch && matchesCategory;
   });
 
-  // ==============================
+  // ==================================
   // AI RECOMMENDATIONS
-  // ==============================
+  // ==================================
 
   useEffect(() => {
     if (products.length === 0) {
@@ -268,15 +317,10 @@ function App() {
       return;
     }
 
-    const candidateProducts = products.filter(
+    const candidates = products.filter(
       (product) =>
         !cart.some((item) => item._id === product._id)
     );
-
-    if (candidateProducts.length === 0) {
-      setRecommendations([]);
-      return;
-    }
 
     const cartCategories = cart.map((item) => item.category);
 
@@ -289,66 +333,61 @@ function App() {
     );
 
     const hasInteraction =
-      cartCategories.length > 0 || viewedProductIds.length > 0;
+      cartCategories.length > 0 || viewedCategories.length > 0;
 
-    const scoredRecommendations: Recommendation[] =
-      candidateProducts.map((product) => {
-        let score = 0;
-        const reasons: string[] = [];
+    const scored: Recommendation[] = candidates.map((product) => {
+      let score = 0;
+      const reasons: string[] = [];
 
-        if (cartCategories.includes(product.category)) {
-          score += 50;
-          reasons.push("matches your cart category");
-        }
+      if (cartCategories.includes(product.category)) {
+        score += 50;
+        reasons.push("Matches your cart category");
+      }
 
-        if (viewedCategories.includes(product.category)) {
-          score += 30;
-          reasons.push("matches products you viewed");
-        }
+      if (viewedCategories.includes(product.category)) {
+        score += 30;
+        reasons.push("Matches products you viewed");
+      }
 
-        const ratingScore =
-          Math.min(Math.max(product.rating, 0), 5) * 4;
+      const ratingScore =
+        Math.min(Math.max(product.rating || 0, 0), 5) * 4;
 
-        score += ratingScore;
+      score += ratingScore;
 
-        if (product.rating >= 4.5) {
-          reasons.push("high customer rating");
-        }
+      if (product.rating >= 4.5) {
+        reasons.push("High customer rating");
+      }
 
-        if (!hasInteraction) {
-          score = ratingScore;
-          reasons.length = 0;
+      if (!hasInteraction) {
+        score = ratingScore;
+        reasons.length = 0;
+        reasons.push(
+          product.rating >= 4.5
+            ? "High customer rating"
+            : "Popular quality product"
+        );
+      }
 
-          reasons.push(
-            product.rating >= 4.5
-              ? "high customer rating"
-              : "popular quality product"
-          );
-        }
+      return {
+        ...product,
+        recommendationScore: Math.round(score * 10) / 10,
+        reason: reasons.join(" • ")
+      };
+    });
 
-        return {
-          ...product,
-          recommendationScore: Math.round(score * 10) / 10,
-          reason:
-            reasons.length > 0
-              ? reasons.join(" • ")
-              : "recommended for you"
-        };
-      });
-
-    scoredRecommendations.sort(
+    scored.sort(
       (a, b) =>
         b.recommendationScore - a.recommendationScore ||
         b.rating - a.rating ||
         a.name.localeCompare(b.name)
     );
 
-    setRecommendations(scoredRecommendations.slice(0, 4));
+    setRecommendations(scored.slice(0, 4));
   }, [cart, products, viewedProductIds]);
 
-  // ==============================
+  // ==================================
   // RECOMMENDATION EVALUATION
-  // ==============================
+  // ==================================
 
   useEffect(() => {
     if (recommendations.length === 0 || products.length === 0) {
@@ -356,21 +395,13 @@ function App() {
       return;
     }
 
-    const cartCategories = new Set(
-      cart.map((item) => item.category)
-    );
-
-    const viewedCategories = new Set(
-      products
+    const interestCategories = new Set([
+      ...cart.map((item) => item.category),
+      ...products
         .filter((product) =>
           viewedProductIds.includes(product._id)
         )
         .map((product) => product.category)
-    );
-
-    const interestCategories = new Set([
-      ...cartCategories,
-      ...viewedCategories
     ]);
 
     if (interestCategories.size === 0) {
@@ -393,39 +424,63 @@ function App() {
     setEvaluation(result);
   }, [recommendations, products, cart, viewedProductIds]);
 
-  // ==============================
-  // AUTH FORM RESET
-  // ==============================
+  // ==================================
+  // AUTH RESET
+  // ==================================
+
+  
+  // ==================================
+  // AUTH RESET
+  // ==================================
 
   const resetAuthForm = () => {
     setAuthName("");
     setAuthEmail("");
     setAuthPassword("");
     setConfirmPassword("");
+    setResetOtp("");
+    setResetToken("");
+    setOtpVerified(false);
     setResetMessage("");
-    setResetLink("");
   };
 
-  // ==============================
-  // LOGIN / REGISTER
-  // ==============================
+  // ==================================
+  // LOGIN AND REGISTER
+  // ==================================
 
   const handleAuth = async () => {
+    if (!authEmail.trim() || !authPassword) {
+      alert("Please enter email and password.");
+      return;
+    }
+
+    if (authMode === "register") {
+      if (!authName.trim()) {
+        alert("Please enter your name.");
+        return;
+      }
+
+      if (authPassword.length < 6) {
+        alert("Password must be at least 6 characters.");
+        return;
+      }
+    }
+
     try {
       const endpoint =
         authMode === "login"
-          ? "https://quickkart-ai.onrender.com/api/auth/login"
-          : "https://quickkart-ai.onrender.com/api/auth/register";
+          ? `${API}/api/auth/login`
+          : `${API}/api/auth/register`;
 
       const body =
         authMode === "login"
           ? {
-              email: authEmail,
+              email: authEmail.trim().toLowerCase(),
               password: authPassword
             }
           : {
-              name: authName,
-              email: authEmail,
+              name: authName.trim(),
+              email: authEmail.trim().toLowerCase(),
               password: authPassword
             };
 
@@ -440,50 +495,36 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        alert(data.message || "Authentication failed");
+        alert(data.message || "Authentication failed.");
         return;
       }
 
-      if (authMode === "login") {
-        const user: User = {
-          id: data.user.id,
-          name: data.user.name,
-          email: data.user.email,
-          role: data.user.role === "admin" ? "admin" : "user"
-        };
+      if (data.requiresOtp) {
+        setAuthEmail(authEmail.trim().toLowerCase());
+        setResetOtp("");
+        setResetToken("");
+        setOtpVerified(false);
+        setAuthPassword("");
+        setConfirmPassword("");
 
-        setLoggedInUser(user);
-
-        alert(
-          user.role === "admin"
-            ? "Admin login successful! 🎉"
-            : "Login successful!"
+        setResetMessage(
+          data.message || "OTP sent to your email. Please verify it."
         );
 
-        setShowAuth(false);
-        setShowOrders(false);
-        resetAuthForm();
-
-        if (user.role === "admin") {
-          setTimeout(() => {
-            loadAdminDashboard(user);
-          }, 300);
-        }
-      } else {
-        alert("Registration successful! Please login.");
-
-        setAuthMode("login");
-        resetAuthForm();
+        setAuthMode("verifyOtp");
+        return;
       }
+
+      alert(data.message || "Unexpected authentication response.");
     } catch (error) {
       console.error("Authentication error:", error);
       alert("Unable to connect to backend.");
     }
   };
 
-  // ==============================
+  // ==================================
   // FORGOT PASSWORD
-  // ==============================
+  // ==================================
 
   const handleForgotPassword = async () => {
     const email = authEmail.trim().toLowerCase();
@@ -495,7 +536,7 @@ function App() {
 
     try {
       const response = await fetch(
-        "https://quickkart-ai.onrender.com/api/auth/forgot-password",
+        `${API}/api/auth/forgot-password`,
         {
           method: "POST",
           headers: {
@@ -508,43 +549,133 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        alert(data.message || "Unable to process request.");
+        setResetMessage(data.message || "Unable to process request.");
+        return;
+      }
+
+      setAuthEmail(email);
+      setResetOtp("");
+      setResetToken("");
+      setOtpVerified(false);
+      setAuthPassword("");
+      setConfirmPassword("");
+
+      setResetMessage(
+        data.message || "OTP sent to your registered email."
+      );
+
+      setAuthMode("verifyOtp");
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      setResetMessage("Unable to connect to backend.");
+    }
+  };
+
+  // ==================================
+  // VERIFY OTP
+  // ==================================
+
+  const handleVerifyOtp = async () => {
+    if (!authEmail.trim()) {
+      setResetMessage("Email address is missing.");
+      return;
+    }
+
+    if (!/^\d{6}$/.test(resetOtp)) {
+      setResetMessage("Please enter a valid 6-digit OTP.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${API}/api/auth/verify-otp`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            email: authEmail.trim().toLowerCase(),
+            otp: resetOtp
+          })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        setResetMessage(data.message || "OTP verification failed.");
+        return;
+      }
+
+      // LOGIN OR REGISTER OTP SUCCESS
+      if (data.user) {
+        const user: User = {
+          id: data.user.id || data.user._id,
+          _id: data.user._id,
+          name: data.user.name,
+          email: data.user.email,
+          role: data.user.role === "admin" ? "admin" : "user"
+        };
+
+        setLoggedInUser(user);
+        setShowAuth(false);
+        setShowOrders(false);
+        setShowAdmin(false);
+
+        setResetOtp("");
+        setResetToken("");
+        setOtpVerified(false);
+
+        resetAuthForm();
+
+        alert(
+          user.role === "admin"
+            ? "Admin login successful!"
+            : "Email verified successfully! Login successful!"
+        );
+
+        if (user.role === "admin") {
+          loadAdminDashboard(user);
+        }
+
+        return;
+      }
+
+      // FORGOT PASSWORD OTP SUCCESS
+      const token = data.token || data.resetToken;
+
+      if (token) {
+        setResetToken(token);
+        setOtpVerified(true);
+        setResetOtp("");
+        setAuthPassword("");
+        setConfirmPassword("");
+
+        setResetMessage(
+          data.message || "OTP verified. Please create a new password."
+        );
+
+        setAuthMode("reset");
         return;
       }
 
       setResetMessage(
-        data.message || "Password reset request processed."
+        data.message || "OTP verified, but the server did not return the expected response."
       );
-
-      if (data.resetLink) {
-        try {
-          const token = new URL(data.resetLink).searchParams.get("token");
-
-          if (token) {
-            const localResetLink =
-              `${window.location.origin}/reset-password?token=${encodeURIComponent(token)}`;
-
-            setResetLink(localResetLink);
-          }
-        } catch (error) {
-          console.error("Reset URL error:", error);
-        }
-      } else {
-        setResetLink("");
-      }
     } catch (error) {
-      console.error("Forgot password error:", error);
-      alert("Unable to connect to backend.");
+      console.error("OTP verification error:", error);
+      setResetMessage("Unable to verify OTP. Please try again.");
     }
   };
 
-  // ==============================
+  // ==================================
   // RESET PASSWORD
-  // ==============================
+  // ==================================
 
   const handleResetPassword = async () => {
     if (!resetToken) {
-      alert("Invalid or missing password reset link.");
+      alert("Invalid or missing reset token.");
       return;
     }
 
@@ -560,7 +691,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `https://quickkart-ai.onrender.com/api/auth/reset-password/${encodeURIComponent(resetToken)}`,
+        `${API}/api/auth/reset-password/${encodeURIComponent(resetToken)}`,
         {
           method: "POST",
           headers: {
@@ -575,19 +706,18 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        alert(data.message || "Password reset failed.");
+        setResetMessage(data.message || "Password reset failed.");
         return;
       }
 
-      alert(
-        "Password changed successfully! Please login with your new password."
-      );
+      alert("Password changed successfully! Please login.");
 
       setResetToken("");
+      setResetOtp("");
+      setOtpVerified(false);
       setAuthPassword("");
       setConfirmPassword("");
       setResetMessage("");
-      setResetLink("");
       setAuthMode("login");
       setShowAuth(true);
 
@@ -598,9 +728,9 @@ function App() {
     }
   };
 
-  // ==============================
+  // ==================================
   // LOGOUT
-  // ==============================
+  // ==================================
 
   const logout = () => {
     setLoggedInUser(null);
@@ -615,22 +745,21 @@ function App() {
     alert("Logged out successfully.");
   };
 
-  // ==============================
+  // ==================================
   // ADMIN DASHBOARD
-  // ==============================
+  // ==================================
 
   const loadAdminDashboard = async (userOverride?: User) => {
     const currentUser = userOverride || loggedInUser;
 
     if (!currentUser) {
-      alert("Please login as admin.");
       setAuthMode("login");
       setShowAuth(true);
       return;
     }
 
     if (currentUser.role !== "admin") {
-      alert("Access denied. Admin account required.");
+      alert("Admin account required.");
       return;
     }
 
@@ -647,10 +776,10 @@ function App() {
         usersResponse,
         ordersResponse
       ] = await Promise.all([
-        fetch(`https://quickkart-ai.onrender.com/api/admin/stats/${userId}`),
-        fetch(`https://quickkart-ai.onrender.com/api/admin/products/${userId}`),
-        fetch(`https://quickkart-ai.onrender.com/api/admin/users/${userId}`),
-        fetch(`https://quickkart-ai.onrender.com/api/admin/orders/${userId}`)
+        fetch(`${API}/api/admin/stats/${userId}`),
+        fetch(`${API}/api/admin/products/${userId}`),
+        fetch(`${API}/api/admin/users/${userId}`),
+        fetch(`${API}/api/admin/orders/${userId}`)
       ]);
 
       const statsData = await statsResponse.json();
@@ -664,7 +793,7 @@ function App() {
         return;
       }
 
-      setAdminStats(statsData.stats);
+      setAdminStats(statsData.stats || null);
       setAdminProducts(productsData.products || []);
       setAdminUsers(usersData.users || []);
       setAdminOrders(ordersData.orders || []);
@@ -682,9 +811,9 @@ function App() {
     }
   };
 
-  // ==============================
+  // ==================================
   // MY ORDERS
-  // ==============================
+  // ==================================
 
   const loadOrders = async () => {
     if (!loggedInUser) {
@@ -695,10 +824,15 @@ function App() {
 
     try {
       const response = await fetch(
-        `https://quickkart-ai.onrender.com/api/orders/user/${loggedInUser.id}`
+        `${API}/api/orders/user/${loggedInUser.id}`
       );
 
       const data = await response.json();
+
+      if (!response.ok) {
+        alert(data.message || "Unable to load orders.");
+        return;
+      }
 
       if (data.success) {
         setOrders(data.orders || []);
@@ -713,12 +847,13 @@ function App() {
       }
     } catch (error) {
       console.error("Orders fetch error:", error);
+      alert("Unable to load orders.");
     }
   };
 
-  // ==============================
+  // ==================================
   // PLACE ORDER
-  // ==============================
+  // ==================================
 
   const placeOrder = async () => {
     if (!loggedInUser) {
@@ -742,30 +877,27 @@ function App() {
         image: item.image
       }));
 
-      const response = await fetch(
-        "https://quickkart-ai.onrender.com/api/orders",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            userId: loggedInUser.id,
-            items: orderItems,
-            totalAmount: cartTotal,
-            paymentMethod: "Cash on Delivery"
-          })
-        }
-      );
+      const response = await fetch(`${API}/api/orders`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          userId: loggedInUser.id,
+          items: orderItems,
+          totalAmount: cartTotal,
+          paymentMethod: "Cash on Delivery"
+        })
+      });
 
       const data = await response.json();
 
       if (!response.ok) {
-        alert(data.message || "Order failed");
+        alert(data.message || "Order failed.");
         return;
       }
 
-      alert("Order placed successfully! 🎉");
+      alert("Order placed successfully!");
       setCart([]);
     } catch (error) {
       console.error("Order placement error:", error);
@@ -773,52 +905,48 @@ function App() {
     }
   };
 
-  // ==============================
-  // DELETE PRODUCT - ADMIN
-  // ==============================
+  // ==================================
+  // DELETE PRODUCT
+  // ==================================
 
   const deleteAdminProduct = async (productId: string) => {
     if (!loggedInUser) return;
 
-    const confirmDelete = window.confirm(
-      "Are you sure you want to delete this product?"
-    );
-
-    if (!confirmDelete) return;
+    if (!window.confirm("Are you sure you want to delete this product?")) {
+      return;
+    }
 
     try {
       const response = await fetch(
-        `https://quickkart-ai.onrender.com/api/admin/products/${loggedInUser.id}/${productId}`,
+        `${API}/api/admin/products/${loggedInUser.id}/${productId}`,
         { method: "DELETE" }
       );
 
       const data = await response.json();
 
       if (!response.ok) {
-        alert(data.message || "Failed to delete product");
+        alert(data.message || "Failed to delete product.");
         return;
       }
 
-      alert("Product deleted successfully.");
-
-      await loadAdminDashboard();
-
-      const productsResponse = await fetch(
-        "https://quickkart-ai.onrender.com/api/products"
+      setProducts((previous) =>
+        previous.filter((product) => product._id !== productId)
       );
 
-      const productsData = await productsResponse.json();
+      setAdminProducts((previous) =>
+        previous.filter((product) => product._id !== productId)
+      );
 
-      setProducts(productsData.products || []);
+      alert("Product deleted successfully.");
     } catch (error) {
       console.error("Delete product error:", error);
       alert("Unable to delete product.");
     }
   };
 
-  // ==============================
-  // UPDATE ORDER STATUS - ADMIN
-  // ==============================
+  // ==================================
+  // UPDATE ORDER STATUS
+  // ==================================
 
   const updateOrderStatus = async (
     orderId: string,
@@ -828,7 +956,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `https://quickkart-ai.onrender.com/api/admin/orders/${loggedInUser.id}/${orderId}`,
+        `${API}/api/admin/orders/${loggedInUser.id}/${orderId}`,
         {
           method: "PUT",
           headers: {
@@ -841,12 +969,12 @@ function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        alert(data.message || "Failed to update status");
+        alert(data.message || "Failed to update order status.");
         return;
       }
 
-      setAdminOrders((previousOrders) =>
-        previousOrders.map((order) =>
+      setAdminOrders((previous) =>
+        previous.map((order) =>
           order._id === orderId
             ? { ...order, status }
             : order
@@ -860,9 +988,9 @@ function App() {
     }
   };
 
-  // ==============================
+  // ==================================
   // RETURN UI
-  // ==============================
+  // ==================================
 
   return (
     <div className="app">
@@ -870,7 +998,6 @@ function App() {
       {/* HEADER */}
 
       <header className="header">
-
         <div className="logo">
           🛒 <span>QuickKart <b>AI</b></span>
         </div>
@@ -900,16 +1027,15 @@ function App() {
         </nav>
 
         <div className="header-actions">
-
           <button className="icon-btn">♡</button>
 
           <button
             className="icon-btn"
-            onClick={() => {
+            onClick={() =>
               document.getElementById("cart")?.scrollIntoView({
                 behavior: "smooth"
-              });
-            }}
+              })
+            }
           >
             🛒 {cartItemCount}
           </button>
@@ -929,7 +1055,6 @@ function App() {
               Logout
             </button>
           )}
-
         </div>
       </header>
 
@@ -938,9 +1063,7 @@ function App() {
         {/* HERO */}
 
         <section className="hero-section" id="home">
-
           <div className="hero-content">
-
             <p className="tagline">✨ AI-Powered Shopping</p>
 
             <h1>
@@ -955,50 +1078,46 @@ function App() {
 
             {backendMessage && (
               <p className="backend-status">
-                🟢 Backend: {backendMessage}
+                {backendMessage.includes("failed") ? "🔴" : "🟢"}
+                {" "}Backend: {backendMessage}
               </p>
             )}
 
             {loggedInUser && (
               <p className="backend-status">
                 👋 Welcome, {loggedInUser.name}
-                {loggedInUser.role === "admin" && <> • Admin</>}
+                {loggedInUser.role === "admin" && " • Admin"}
               </p>
             )}
 
             <div className="hero-buttons">
-
               <button
                 className="primary-btn"
-                onClick={() => {
+                onClick={() =>
                   document.getElementById("products")?.scrollIntoView({
                     behavior: "smooth"
-                  });
-                }}
+                  })
+                }
               >
                 Start Shopping →
               </button>
 
               <button
                 className="secondary-btn"
-                onClick={() => {
+                onClick={() =>
                   document.getElementById("products")?.scrollIntoView({
                     behavior: "smooth"
-                  });
-                }}
+                  })
+                }
               >
                 Explore Products
               </button>
-
             </div>
           </div>
 
           <div className="hero-card">
-
             <div className="shopping-icon">🛍️</div>
-
             <h3>Personalized For You</h3>
-
             <p>
               AI recommendations based on your shopping interests.
             </p>
@@ -1010,69 +1129,47 @@ function App() {
                 <small>Products selected for you</small>
               </div>
             </div>
-
           </div>
-
         </section>
 
         {/* CATEGORIES */}
 
         <section className="section" id="categories">
-
           <div className="section-heading">
             <p>EXPLORE</p>
             <h2>Shop by Category</h2>
           </div>
 
           <div className="categories">
-
-            <div
-              className="category-card"
-              onClick={() => setSelectedCategory("Electronics")}
-            >
-              <div>📱</div>
-              <h3>Electronics</h3>
-              <p>Latest gadgets</p>
-            </div>
-
-            <div
-              className="category-card"
-              onClick={() => setSelectedCategory("Fashion")}
-            >
-              <div>👕</div>
-              <h3>Fashion</h3>
-              <p>Trendy styles</p>
-            </div>
-
-            <div
-              className="category-card"
-              onClick={() => setSelectedCategory("Home & Living")}
-            >
-              <div>🏠</div>
-              <h3>Home & Living</h3>
-              <p>Make your home better</p>
-            </div>
-
-            <div
-              className="category-card"
-              onClick={() => setSelectedCategory("Gaming")}
-            >
-              <div>🎮</div>
-              <h3>Gaming</h3>
-              <p>Level up your game</p>
-            </div>
-
+            {[
+              { name: "Electronics", icon: "📱", desc: "Latest gadgets" },
+              { name: "Fashion", icon: "👕", desc: "Trendy styles" },
+              { name: "Home & Living", icon: "🏠", desc: "Make your home better" },
+              { name: "Gaming", icon: "🎮", desc: "Level up your game" }
+            ].map((category) => (
+              <div
+                className="category-card"
+                key={category.name}
+                onClick={() => {
+                  setSelectedCategory(category.name);
+                  document.getElementById("products")?.scrollIntoView({
+                    behavior: "smooth"
+                  });
+                }}
+              >
+                <div>{category.icon}</div>
+                <h3>{category.name}</h3>
+                <p>{category.desc}</p>
+              </div>
+            ))}
           </div>
         </section>
 
-        {/* AI SECTION */}
+        {/* AI INTRO */}
 
         <section className="ai-section">
-
           <div className="ai-content">
-
             <p className="tagline">🤖 SMART RECOMMENDATIONS</p>
-
             <h2>Recommended For You</h2>
 
             <p>
@@ -1082,30 +1179,26 @@ function App() {
 
             <button
               className="primary-btn"
-              onClick={() => {
+              onClick={() =>
                 document.getElementById("recommendations")?.scrollIntoView({
                   behavior: "smooth"
-                });
-              }}
+                })
+              }
             >
               View Recommendations →
             </button>
-
           </div>
-
         </section>
 
         {/* PRODUCTS */}
 
         <section className="section" id="products">
-
           <div className="section-heading">
             <p>POPULAR</p>
             <h2>Featured Products</h2>
           </div>
 
           <div className="product-controls">
-
             <input
               type="text"
               placeholder="Search products..."
@@ -1123,21 +1216,32 @@ function App() {
                 </option>
               ))}
             </select>
-
           </div>
 
-          {filteredProducts.length === 0 ? (
-            <div className="loading">No products found.</div>
+          {loadingProducts ? (
+            <div className="loading">Loading products...</div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="loading">
+              {products.length === 0
+                ? "No products available."
+                : "No products found for this search or category."}
+              <button
+                onClick={() => {
+                  setSearchTerm("");
+                  setSelectedCategory("All");
+                }}
+              >
+                Show All Products
+              </button>
+            </div>
           ) : (
             <div className="products">
-
               {filteredProducts.map((product) => (
                 <div
                   className="product-card"
                   key={product._id}
                   onClick={() => trackProductView(product._id)}
                 >
-
                   <div className="product-image">
                     {product.image ? (
                       <img src={product.image} alt={product.name} />
@@ -1163,26 +1267,23 @@ function App() {
                   </p>
 
                   <button
+                    disabled={product.stock <= 0}
                     onClick={(event) => {
                       event.stopPropagation();
                       addToCart(product);
                     }}
                   >
-                    Add to Cart
+                    {product.stock <= 0 ? "Out of Stock" : "Add to Cart"}
                   </button>
-
                 </div>
               ))}
-
             </div>
           )}
-
         </section>
 
         {/* RECOMMENDATIONS */}
 
         <section className="section" id="recommendations">
-
           <div className="section-heading">
             <p>AI POWERED</p>
             <h2>Personalized Recommendations</h2>
@@ -1199,10 +1300,8 @@ function App() {
             </div>
           ) : (
             <div className="products">
-
               {recommendations.map((product) => (
                 <div className="product-card" key={product._id}>
-
                   <div className="product-image">
                     {product.image ? (
                       <img src={product.image} alt={product.name} />
@@ -1223,9 +1322,7 @@ function App() {
                     ⭐ {product.rating}
                   </p>
 
-                  <p className="stock">
-                    🤖 {product.reason}
-                  </p>
+                  <p className="stock">🤖 {product.reason}</p>
 
                   <p className="stock">
                     Recommendation Score: {product.recommendationScore}
@@ -1234,10 +1331,8 @@ function App() {
                   <button onClick={() => addToCart(product)}>
                     Add to Cart
                   </button>
-
                 </div>
               ))}
-
             </div>
           )}
 
@@ -1252,7 +1347,6 @@ function App() {
                 textAlign: "center"
               }}
             >
-
               <h3>📊 Recommendation Evaluation</h3>
 
               <p>
@@ -1269,7 +1363,6 @@ function App() {
                   marginTop: "15px"
                 }}
               >
-
                 <div>
                   <strong>Precision@{evaluation.k}</strong>
                   <h2>
@@ -1283,7 +1376,6 @@ function App() {
                     {(evaluation.hitRateAtK * 100).toFixed(0)}%
                   </h2>
                 </div>
-
               </div>
 
               <p style={{ marginTop: "15px", fontSize: "14px" }}>
@@ -1298,40 +1390,25 @@ function App() {
                   : "None"}
               </p>
 
-              <p
-                style={{
-                  fontSize: "13px",
-                  opacity: 0.75,
-                  marginTop: "12px"
-                }}
-              >
+              <p style={{ fontSize: "13px", opacity: 0.75 }}>
                 This evaluation uses the actual products and recommendation
                 results generated by QuickKart AI. No fake accuracy value is used.
               </p>
-
             </div>
           )}
 
-          <div
-            style={{
-              marginTop: "25px",
-              textAlign: "center",
-              opacity: 0.85
-            }}
-          >
+          <div style={{ marginTop: "25px", textAlign: "center" }}>
             <p>
               <strong>Recommendation method:</strong>{" "}
               Content-based scoring using category interest, product
               interactions, and customer rating.
             </p>
           </div>
-
         </section>
 
         {/* CART */}
 
         <section className="section cart-section" id="cart">
-
           <div className="section-heading">
             <p>YOUR CART</p>
             <h2>Shopping Cart</h2>
@@ -1345,12 +1422,9 @@ function App() {
             </div>
           ) : (
             <>
-
               <div className="cart-items">
-
                 {cart.map((item) => (
                   <div className="cart-item" key={item._id}>
-
                     <div>
                       <h3>{item.name}</h3>
                       <p>₹{item.price}</p>
@@ -1363,7 +1437,6 @@ function App() {
                         gap: "10px"
                       }}
                     >
-
                       <button
                         className="icon-btn"
                         onClick={() => decreaseQuantity(item._id)}
@@ -1375,6 +1448,7 @@ function App() {
 
                       <button
                         className="icon-btn"
+                        disabled={item.quantity >= item.stock}
                         onClick={() => increaseQuantity(item._id)}
                       >
                         +
@@ -1386,46 +1460,36 @@ function App() {
                       >
                         Remove
                       </button>
-
                     </div>
                   </div>
                 ))}
-
               </div>
 
               <div className="cart-summary">
-
                 <h3>Cart Summary</h3>
-
                 <p>
                   Total Items: <strong>{cartItemCount}</strong>
                 </p>
-
                 <h2>Total: ₹{cartTotal}</h2>
 
                 <button className="primary-btn" onClick={placeOrder}>
                   Proceed to Checkout →
                 </button>
-
               </div>
-
             </>
           )}
-
         </section>
 
         {/* MY ORDERS */}
 
         {showOrders && (
           <section className="section orders-section" id="orders">
-
             <div className="section-heading">
               <p>ORDER HISTORY</p>
               <h2>My Orders</h2>
             </div>
 
             <div className="orders-container">
-
               <button
                 className="close-orders-btn"
                 onClick={() => setShowOrders(false)}
@@ -1441,12 +1505,9 @@ function App() {
                 </div>
               ) : (
                 <div className="orders-list">
-
                   {orders.map((order) => (
                     <div className="order-card" key={order._id}>
-
                       <div className="order-header">
-
                         <div>
                           <h3>Order #{order._id.slice(-6)}</h3>
                           <p>
@@ -1457,17 +1518,14 @@ function App() {
                         <span className="order-status">
                           {order.status}
                         </span>
-
                       </div>
 
                       <div className="order-products">
-
                         {order.items.map((item, index) => (
                           <div
                             className="order-product"
                             key={`${item.productId}-${index}`}
                           >
-
                             <div>
                               <strong>{item.name}</strong>
                               <p>Quantity: {item.quantity}</p>
@@ -1476,32 +1534,19 @@ function App() {
                             <strong>
                               ₹{item.price * item.quantity}
                             </strong>
-
                           </div>
                         ))}
-
                       </div>
 
                       <div className="order-footer">
-
-                        <span>
-                          Payment: {order.paymentMethod}
-                        </span>
-
-                        <strong>
-                          Total: ₹{order.totalAmount}
-                        </strong>
-
+                        <span>Payment: {order.paymentMethod}</span>
+                        <strong>Total: ₹{order.totalAmount}</strong>
                       </div>
-
                     </div>
                   ))}
-
                 </div>
               )}
-
             </div>
-
           </section>
         )}
 
@@ -1509,22 +1554,17 @@ function App() {
 
         {showAdmin && loggedInUser?.role === "admin" && (
           <section className="section" id="admin">
-
             <div className="section-heading">
               <p>ADMIN PANEL</p>
               <h2>QuickKart AI Admin Dashboard</h2>
             </div>
 
             {loadingAdmin ? (
-              <div className="loading">
-                Loading Admin Dashboard...
-              </div>
+              <div className="loading">Loading Admin Dashboard...</div>
             ) : (
               <>
-
                 {adminStats && (
                   <div className="categories">
-
                     <div className="category-card">
                       <div>📦</div>
                       <h3>Total Products</h3>
@@ -1548,29 +1588,23 @@ function App() {
                       <h3>Total Sales</h3>
                       <h2>₹{adminStats.totalSales}</h2>
                     </div>
-
                   </div>
                 )}
 
                 {/* ADMIN PRODUCTS */}
 
                 <div style={{ marginTop: "60px" }}>
-
                   <div className="section-heading">
                     <p>MANAGEMENT</p>
                     <h2>Manage Products</h2>
                   </div>
 
                   {adminProducts.length === 0 ? (
-                    <div className="loading">
-                      No products found.
-                    </div>
+                    <div className="loading">No products found.</div>
                   ) : (
                     <div className="products">
-
                       {adminProducts.map((product) => (
                         <div className="product-card" key={product._id}>
-
                           <div className="product-image">
                             {product.image ? (
                               <img src={product.image} alt={product.name} />
@@ -1593,34 +1627,27 @@ function App() {
                           >
                             Delete Product
                           </button>
-
                         </div>
                       ))}
-
                     </div>
                   )}
-
                 </div>
 
                 {/* ADMIN USERS */}
 
                 <div style={{ marginTop: "60px" }}>
-
                   <div className="section-heading">
                     <p>USERS</p>
                     <h2>Registered Users</h2>
                   </div>
 
                   <div className="orders-list">
-
                     {adminUsers.map((user) => (
                       <div
                         className="order-card"
                         key={user.id || user._id}
                       >
-
                         <div className="order-header">
-
                           <div>
                             <h3>{user.name}</h3>
                             <p>{user.email}</p>
@@ -1629,20 +1656,15 @@ function App() {
                           <span className="order-status">
                             {user.role}
                           </span>
-
                         </div>
-
                       </div>
                     ))}
-
                   </div>
-
                 </div>
 
                 {/* ADMIN ORDERS */}
 
                 <div style={{ marginTop: "60px" }}>
-
                   <div className="section-heading">
                     <p>ORDERS</p>
                     <h2>Manage Orders</h2>
@@ -1655,17 +1677,15 @@ function App() {
                     </div>
                   ) : (
                     <div className="orders-list">
-
                       {adminOrders.map((order) => (
                         <div className="order-card" key={order._id}>
-
                           <div className="order-header">
-
                             <div>
                               <h3>Order #{order._id.slice(-6)}</h3>
 
                               <p>
-                                {typeof order.userId === "object"
+                                {typeof order.userId === "object" &&
+                                order.userId !== null
                                   ? `${order.userId.name} - ${order.userId.email}`
                                   : "Customer"}
                               </p>
@@ -1685,25 +1705,20 @@ function App() {
                                 border: "1px solid #cbd5e1"
                               }}
                             >
-
                               <option value="Pending">Pending</option>
                               <option value="Confirmed">Confirmed</option>
                               <option value="Shipped">Shipped</option>
                               <option value="Delivered">Delivered</option>
                               <option value="Cancelled">Cancelled</option>
-
                             </select>
-
                           </div>
 
                           <div className="order-products">
-
                             {order.items.map((item, index) => (
                               <div
                                 className="order-product"
                                 key={`${item.productId}-${index}`}
                               >
-
                                 <div>
                                   <strong>{item.name}</strong>
                                   <p>Quantity: {item.quantity}</p>
@@ -1712,45 +1727,34 @@ function App() {
                                 <strong>
                                   ₹{item.price * item.quantity}
                                 </strong>
-
                               </div>
                             ))}
-
                           </div>
 
                           <div className="order-footer">
-
                             <span>Payment: {order.paymentMethod}</span>
-
-                            <strong>
-                              Total: ₹{order.totalAmount}
-                            </strong>
-
+                            <strong>Total: ₹{order.totalAmount}</strong>
                           </div>
-
                         </div>
                       ))}
-
                     </div>
                   )}
-
                 </div>
-
               </>
             )}
-
           </section>
         )}
 
       </main>
 
-      {/* ================= AUTH MODAL ================= */}
+    
+
+     
+      {/* AUTH MODAL */}
 
       {showAuth && (
         <div className="auth-overlay">
-
           <div className="auth-modal">
-
             <button
               className="auth-close"
               onClick={() => {
@@ -1768,6 +1772,8 @@ function App() {
                 ? "👤"
                 : authMode === "forgot"
                 ? "📧"
+                : authMode === "verifyOtp"
+                ? "🔢"
                 : "🔑"}
             </div>
 
@@ -1778,6 +1784,8 @@ function App() {
                 ? "Create Account"
                 : authMode === "forgot"
                 ? "Forgot Password?"
+                : authMode === "verifyOtp"
+                ? "Verify Email OTP"
                 : "Reset Password"}
             </h2>
 
@@ -1787,8 +1795,10 @@ function App() {
                 : authMode === "register"
                 ? "Register to start shopping"
                 : authMode === "forgot"
-                ? "Enter your registered email address"
-                : "Enter your new password"}
+                ? "Enter your registered email to receive an OTP"
+                : authMode === "verifyOtp"
+                ? "Enter the 6-digit OTP sent to your email"
+                : "Create your new password"}
             </p>
 
             {authMode === "register" && (
@@ -1800,14 +1810,23 @@ function App() {
               />
             )}
 
-            {authMode !== "reset" && (
-              <input
-                type="email"
-                placeholder="Email"
-                value={authEmail}
-                onChange={(event) => setAuthEmail(event.target.value)}
-              />
-            )}
+            
+{(authMode === "login" ||
+  authMode === "register" ||
+  authMode === "forgot" ||
+  authMode === "verifyOtp" ||
+  authMode === "reset") && (
+  <input
+    type="email"
+    placeholder="Email Address"
+    value={authEmail}
+    onChange={(event) => setAuthEmail(event.target.value)}
+    readOnly={
+      authMode === "verifyOtp" || authMode === "reset"
+    }
+  />
+)}
+
 
             {(authMode === "login" || authMode === "register") && (
               <input
@@ -1815,6 +1834,18 @@ function App() {
                 placeholder="Password"
                 value={authPassword}
                 onChange={(event) => setAuthPassword(event.target.value)}
+              />
+            )}
+
+            {authMode === "verifyOtp" && (
+              <input
+                type="text"
+                placeholder="Enter 6-digit OTP"
+                value={resetOtp}
+                maxLength={6}
+                onChange={(event) =>
+                  setResetOtp(event.target.value.replace(/\D/g, ""))
+                }
               />
             )}
 
@@ -1838,36 +1869,29 @@ function App() {
 
             {authMode === "login" && (
               <p className="auth-switch">
-
                 <button
                   type="button"
                   onClick={() => {
                     setAuthMode("forgot");
                     setResetMessage("");
-                    setResetLink("");
                     setAuthPassword("");
                   }}
-                  style={{
-                    color: "#2563eb",
-                    fontWeight: "bold"
-                  }}
+                  style={{ color: "#2563eb", fontWeight: "bold" }}
                 >
                   Forgot Password?
                 </button>
-
               </p>
             )}
 
             <button
               className="auth-submit"
               onClick={() => {
-                if (
-                  authMode === "login" ||
-                  authMode === "register"
-                ) {
+                if (authMode === "login" || authMode === "register") {
                   handleAuth();
                 } else if (authMode === "forgot") {
                   handleForgotPassword();
+                } else if (authMode === "verifyOtp") {
+                  handleVerifyOtp();
                 } else {
                   handleResetPassword();
                 }
@@ -1878,7 +1902,9 @@ function App() {
                 : authMode === "register"
                 ? "Register"
                 : authMode === "forgot"
-                ? "Send Reset Link"
+                ? "Send OTP"
+                : authMode === "verifyOtp"
+                ? "Verify OTP"
                 : "Update Password"}
             </button>
 
@@ -1887,98 +1913,59 @@ function App() {
                 style={{
                   color: "#15803d",
                   marginTop: "12px",
-                  textAlign: "center"
+                  textAlign: "center",
                 }}
               >
                 {resetMessage}
               </p>
             )}
 
-            {resetLink && (
-              <div
-                style={{
-                  marginTop: "15px",
-                  textAlign: "center"
-                }}
-              >
-
-                <p>Password reset link (local demo):</p>
-
-                <a
-                  href={resetLink}
-                  style={{
-                    color: "#2563eb",
-                    fontWeight: "bold",
-                    wordBreak: "break-all"
-                  }}
-                >
-                  Open Reset Password Page
-                </a>
-
-              </div>
-            )}
-
             {(authMode === "login" || authMode === "register") ? (
               <p className="auth-switch">
-
                 {authMode === "login"
                   ? "Don't have an account? "
                   : "Already have an account? "}
 
                 <button
                   onClick={() => {
-                    setAuthMode(
-                      authMode === "login"
-                        ? "register"
-                        : "login"
-                    );
-
+                    setAuthMode(authMode === "login" ? "register" : "login");
                     resetAuthForm();
                   }}
                 >
                   {authMode === "login" ? "Register" : "Login"}
                 </button>
-
               </p>
             ) : (
               <p className="auth-switch">
-
                 <button
                   onClick={() => {
                     setAuthMode("login");
                     setResetMessage("");
-                    setResetLink("");
-                    setResetToken("");
+                    setResetOtp("");
+                    setOtpVerified(false);
                     setAuthPassword("");
                     setConfirmPassword("");
                   }}
                 >
                   Back to Login
                 </button>
-
               </p>
             )}
-
           </div>
-
         </div>
       )}
+
 
       {/* FOOTER */}
 
       <footer id="about">
-
         <div>
           <h3>🛒 QuickKart AI</h3>
           <p>AI-powered e-commerce platform.</p>
         </div>
 
-        <p>
-          © 2026 QuickKart AI. All rights reserved.
-        </p>
-
+        <p>© 2026 QuickKart AI. All rights reserved.</p>
       </footer>
-
     </div>
   );
 }

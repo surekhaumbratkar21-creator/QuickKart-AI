@@ -29,13 +29,50 @@ const userSchema = new mongoose.Schema(
       default: "user"
     },
 
-    // Forgot Password fields
-    resetPasswordToken: {
+    isVerified: {
+      type: Boolean,
+      default: false
+    },
+
+    // OTP Authentication
+    otpHash: {
       type: String,
       default: null
     },
 
-    resetPasswordExpires: {
+    otpExpires: {
+      type: Date,
+      default: null
+    },
+
+    otpPurpose: {
+      type: String,
+      enum: ["login", "register", "reset", null],
+      default: null
+    },
+
+    otpAttempts: {
+      type: Number,
+      default: 0
+    },
+
+    otpSentAt: {
+      type: Date,
+      default: null
+    },
+
+    pendingName: {
+      type: String,
+      default: null
+    },
+
+    // Password reset
+    resetTokenHash: {
+      type: String,
+      default: null
+    },
+
+    resetTokenExpires: {
       type: Date,
       default: null
     }
